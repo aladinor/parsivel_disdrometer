@@ -16,6 +16,21 @@ def calc_nd(sr_event, size, dsize=.125, dt=60):
     return ND
 
 
+def lermithe(D):
+    return 9.24*(1.-np.exp(-6.8 * (D/10.) ** 2 - 4.88 * (D/10.)))
+
+
+def lina_filter(sizes, vels, tresh=2):
+    filtered = []
+    for idx, i in enumerate(sizes):
+        lina_vel_up = lermithe(np.array(i)) + tresh
+        lina_vel_down = lermithe(np.array(i)) - tresh
+        fil = np.ma.masked_where(vels >= lina_vel_up, vels)
+        fil = np.ma.masked_where(fil <= lina_vel_down, fil)
+        filtered.append(np.ma.getmaskarray(fil))
+    return np.array(filtered)
+
+
 def paleta():
     cdict = {'red': ((0., 1, 1),
                      (0.05, 1, 1),
@@ -50,34 +65,37 @@ def parsivel_2(file):
     list_size = collections.OrderedDict(sorted(dt_sizes.items()))
 
     idx_header = pd.MultiIndex.from_product([sizes, vels], names=['Size', 'Speed'])
-    idx_header_lerm = pd.MultiIndex.from_product([sizes, lerm_vel], names=['Size', 'Speed'])
     times = []
-    data = []
+    data_spec = []
     # Tokay filter for rainy minutes
-    events = [i for i, e in enumerate(nc.variables['number_detected_particles']) if (e > 10) and
-              (nc.variables['precip_rate'][i] > 0.1)]
+    events = [i for i, e in enumerate(nc.variables['number_detected_particles']) if (e > 100) and
+              (nc.variables['precip_rate'][i] > 0.5)]
+    spectra_filter = lina_filter(sizes=sizes, vels=vels, tresh=2)
+
     for i in events:
         dates = nc.variables['time'][i]
         time = num2date(dates, nc.variables['time'].units)
         times.append(time)
-        dsd = np.ndarray.flatten(nc.variables['raw_spectrum'][i][:])
-        data.append(dsd)
+        spectrum = np.array(nc.variables['raw_spectrum'][i][:])
+        spectrum = np.ma.masked_array(spectrum, mask=spectra_filter.T, fill_value=0)
+        spectrum = spectrum.filled()
+        # plt.pcolormesh(sizes, vels, spectrum, cmap=paleta())
+        # plt.plot(sizes, lermithe(np.array(sizes)))
+        # plt.plot(sizes, lermithe(np.array(sizes)) + 2.1, 'r')
+        # plt.plot(sizes, lermithe(np.array(sizes)) - 2.1, 'r')
+        # plt.plot(sizes, lermithe(np.array(sizes)) + lermithe(np.array(sizes)) * 0.4, 'c')
+        # plt.plot(sizes, lermithe(np.array(sizes)) - lermithe(np.array(sizes)) * 0.4, 'c')
+        # plt.ylim([0, 10])
+        # plt.xlim([0, 10])
+        # plt.show()
+        spectrum = np.ndarray.flatten(spectrum)
+        data_spec.append(spectrum)
 
-    dsd_data_final = pd.DataFrame(data=data)
-    dsd_data_final.columns = idx_header
-    dsd_data_final.index = times
-    df_lermithe = dsd_data_final
-    df_lermithe.columns = idx_header_lerm
+    dsd_data_final = pd.DataFrame(data=data_spec, columns=pd.MultiIndex.from_product([sizes, vels],
+                                                                                     names=['Size', 'Speed']),
+                                  index=times)
 
-    idx_events = dsd_data_final.index
-
-    # # df_drisd_vel = dsd_data_final.pivot(index='Speed', columns='Size', values=0)
-    #
-    # plt.pcolormesh(df_drisd_vel)
-    # plt.colorbar()
-    # plt.show()
-
-    for event_ext in idx_events:
+    for event_ext in dsd_data_final.index:
         sr_nd = pd.Series(index=sorted(list_size))
         for size in list_size:
             df_size = dsd_data_final.xs(size, level=0, axis=1)
@@ -92,10 +110,6 @@ def parsivel_2(file):
         plt.ylim(10 ** -1, 10 ** 4)
         plt.show()
         plt.close('all')
-
-
-
-    print(nc)
 
 
 def main():
